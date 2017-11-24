@@ -85,6 +85,8 @@ func (c *Call) Return(returnArguments ...interface{}) *Call {
 	c.lock()
 	defer c.unlock()
 
+	c.Parent.assertOutputArgsMatchSignature(c.Method, returnArguments)
+
 	c.ReturnArguments = returnArguments
 
 	return c
@@ -174,6 +176,11 @@ type Mock struct {
 	testData objx.Map
 
 	mutex sync.Mutex
+
+	// Interface spec
+	interfaceSpec reflect.Type
+
+	checkSpec bool
 }
 
 // TestData holds any data that might be useful for testing.  Testify ignores
@@ -196,6 +203,8 @@ func (m *Mock) TestData() objx.Map {
 //
 //     Mock.On("MyMethod", arg1, arg2)
 func (m *Mock) On(methodName string, arguments ...interface{}) *Call {
+	m.assertInputArgsMatchSignature(methodName, arguments)
+
 	for _, arg := range arguments {
 		if v := reflect.ValueOf(arg); v.Kind() == reflect.Func {
 			panic(fmt.Sprintf("cannot use Func in expectations. Use mock.AnythingOfType(\"%T\")", arg))
@@ -207,6 +216,12 @@ func (m *Mock) On(methodName string, arguments ...interface{}) *Call {
 	c := newCall(m, methodName, arguments...)
 	m.ExpectedCalls = append(m.ExpectedCalls, c)
 	return c
+}
+
+func (m *Mock) WithSpec(interfaceSpec interface{}) *Mock {
+	m.checkSpec = true
+	m.interfaceSpec = reflect.TypeOf(interfaceSpec)
+	return m
 }
 
 // /*
@@ -781,4 +796,56 @@ var spewConfig = spew.ConfigState{
 	DisablePointerAddresses: true,
 	DisableCapacities:       true,
 	SortKeys:                true,
+}
+
+func (m *Mock) assertMethodExists(methodName string) {
+	if !m.checkSpec {
+		return
+	}
+	_, ok := m.interfaceSpec.MethodByName(methodName)
+	if !ok {
+		panic(fmt.Sprintf("could find method %s on type %s", methodName, m.interfaceSpec.Name()))
+	}
+}
+
+func (m *Mock) assertInputArgsMatchSignature(methodName string, argsIn []interface{}) {
+	if !m.checkSpec {
+		return
+	}
+	m.assertMethodExists(methodName)
+	method, _ := m.interfaceSpec.MethodByName(methodName)
+	methodType := method.Type
+
+	//argsIn = append(argsIn, m.interfaceSpec)
+	numArgsInExpected, numArgsInProvided := methodType.NumIn(), len(argsIn)
+	if methodType.NumIn()-1 != len(argsIn) {
+		panic(fmt.Sprintf("incorrect number of args provided for %s, expected %d, received %d",
+			method.Name, numArgsInExpected, numArgsInProvided))
+	}
+	for i := 1; i < methodType.NumIn(); i++ {
+		expectedType := methodType.In(i)
+		if expectedType != reflect.TypeOf(argsIn[i-1]) {
+			panic(fmt.Sprintf("expected arg %d of %s to be type %s but got %s", i-1, method.Name, expectedType.Name(), argsIn[i-1]))
+		}
+	}
+}
+
+func (m *Mock) assertOutputArgsMatchSignature(methodName string, argsOut []interface{}) {
+	if !m.checkSpec {
+		return
+	}
+	method, _ := m.interfaceSpec.MethodByName(methodName)
+	methodType := method.Type
+
+	numArgsOutExpected, numArgsOutProvided := methodType.NumOut(), len(argsOut)
+	if methodType.NumOut() != len(argsOut) {
+		panic(fmt.Sprintf("incorrect number of return values provided for %s, expected %d, received %d",
+			method.Name, numArgsOutExpected, numArgsOutProvided))
+	}
+	for i := 0; i < methodType.NumOut(); i++ {
+		expectedType := methodType.Out(i)
+		if expectedType != reflect.TypeOf(argsOut[i]) {
+			panic(fmt.Sprintf("expected return value %d of %s to be type %s", i, method.Name, expectedType.Name()))
+		}
+	}
 }

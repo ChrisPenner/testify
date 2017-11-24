@@ -6,6 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"fmt"
+	"reflect"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1223,4 +1226,45 @@ func Test_MockReturnAndCalledConcurrent(t *testing.T) {
 
 func ConcurrencyTestMethod(m *Mock) {
 	m.Called()
+}
+
+type MockThing struct {
+	Mock
+}
+
+func (m *MockThing) Call(a string) (string, error) {
+	call := m.Called(a)
+	return call.String(0), call.Error(1)
+}
+
+func Test_Mock_WithSpec_On_PanicsWhenCalledWithInvalidFunctionName(t *testing.T) {
+	m := &MockThing{}
+	assert.Panics(t, func() {
+		m.WithSpec(m).On("MissingMethod", "an arg").Return("a result")
+	})
+}
+
+func Test_Mock_WithSpec_On_PanicsWhenCalledWithIncorrectFunctionArguments(t *testing.T) {
+	m := &MockThing{}
+
+	meth, ok := reflect.TypeOf(m).MethodByName("Call")
+	if !ok {
+		fmt.Println("NOTFOUND")
+	}
+	fmt.Printf("FOUND: %s\n", meth.Name)
+	assert.Panics(t, func() {
+		m.WithSpec(m).On("Call", 53)
+	})
+}
+
+func Test_Mock_WithSpec_Return_PanicsWhenCalledWithIncorrectReturnArguments(t *testing.T) {
+	m := &MockThing{}
+	assert.Panics(t, func() {
+		m.WithSpec(m).On("Call", "arg").Return("result", nil)
+	})
+}
+
+func Test_Mock_WithSpec_SucceedsWhenCalledWithCorrectFunctionArguments(t *testing.T) {
+	m := &MockThing{}
+	m.WithSpec(m).On("Call", "arg").Return("a result", errors.New("err"))
 }
